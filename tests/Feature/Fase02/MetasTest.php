@@ -1,0 +1,90 @@
+<?php
+
+use App\Models\Meta;
+use App\Models\Racha;
+use App\Models\User;
+use Database\Seeders\GamificacionSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+uses(RefreshDatabase::class);
+
+beforeEach(fn () => $this->seed(GamificacionSeeder::class));
+
+it('crea una meta cuantitativa y se cumple con el ahorro de todos los miembros (RF-08, RF-21)', function (): void {
+    $propietario = User::factory()->create();
+    $miembro = User::factory()->create();
+    $vivienda = viviendaDe($propietario);
+    $vivienda->usuarios()->attach($miembro->id, ['rol' => 'miembro']);
+    $ducha = ducha();
+
+    $this->actingAs($propietario)->post(route('metas.store'), [
+        'tipo' => 'cuantitativa', 'titulo' => 'Ahorrar 50 litros', 'objetivo_litros' => 50,
+        'fecha_inicio' => today()->toDateString(), 'fecha_fin' => today()->addDays(6)->toDateString(),
+    ])->assertRedirect(route('metas.index'));
+
+    // Cada ducha de 3 minutos ahorra 20 L (referencia 5 min × 10 L/min).
+    foreach ([$propietario, $miembro] as $usuario) {
+        $this->actingAs($usuario)->post(route('habitos.store'), ['actividad_id' => $ducha->id, 'cantidad' => 3, 'fecha' => today()->toDateString()]);
+    }
+    expect(Meta::sole()->estado)->toBe('activa')->and((float) Meta::sole()->progreso)->toBe(80.0);
+
+    // Segunda ducha del día del miembro (registro aparte): ahorra 10 L más y completa la meta.
+    $this->actingAs($miembro)->post(route('habitos.store'), ['actividad_id' => $ducha->id, 'cantidad' => 4, 'fecha' => today()->toDateString(), 'duplicado' => 'separado'])
+        ->assertSessionHas('gamificacion', fn (array $g) => $g['metas'] === ['Ahorrar 50 litros']);
+
+    expect(Meta::sole()->estado)->toBe('cumplida')
+        ->and($propietario->logros()->pluck('clave'))->toContain('meta_1')
+        ->and($miembro->logros()->pluck('clave'))->toContain('meta_1');
+});
+
+it('mide una meta cualitativa por días que respetan el límite', function (): void {
+    $usuario = User::factory()->create();
+    $vivienda = viviendaDe($usuario);
+    $ducha = ducha();
+
+    $this->actingAs($usuario)->post(route('metas.store'), [
+        'tipo' => 'cualitativa', 'titulo' => 'Duchas de 5 minutos', 'actividad_id' => $ducha->id,
+        'limite_cantidad' => 5, 'dias_objetivo' => 4,
+        'fecha_inicio' => today()->subDays(3)->toDateString(), 'fecha_fin' => today()->addDays(3)->toDateString(),
+    ])->assertSessionHasNoErrors();
+
+    foreach ([[3, 4], [2, 9], [1, 5]] as [$diasAtras, $minutos]) {
+        $this->actingAs($usuario)->post(route('habitos.store'), ['actividad_id' => $ducha->id, 'cantidad' => $minutos, 'fecha' => today()->subDays($diasAtras)->toDateString()]);
+    }
+
+    // Cumplen 2 de 4 días (el de 9 minutos no cuenta).
+    expect((float) Meta::sole()->progreso)->toBe(50.0);
+});
+
+it('no permite dos metas activas iguales ni fechas inválidas (CU-10)', function (): void {
+    $usuario = User::factory()->create();
+    viviendaDe($usuario);
+    $meta = ['tipo' => 'cuantitativa', 'titulo' => 'Meta', 'objetivo_litros' => 100,
+        'fecha_inicio' => today()->toDateString(), 'fecha_fin' => today()->addDays(10)->toDateString()];
+
+    $this->actingAs($usuario)->post(route('metas.store'), $meta)->assertSessionHasNoErrors();
+    $this->actingAs($usuario)->post(route('metas.store'), $meta)->assertSessionHasErrors('tipo');
+    $this->actingAs($usuario)->post(route('metas.store'), [...$meta, 'fecha_fin' => today()->subDay()->toDateString()])
+        ->assertSessionHasErrors('fecha_fin');
+});
+
+it('el cierre diario vence metas, reinicia rachas y expira invitaciones (CU-19)', function (): void {
+    $usuario = User::factory()->create();
+    $vivienda = viviendaDe($usuario);
+    $meta = $vivienda->metas()->create([
+        'creada_por' => $usuario->id, 'tipo' => 'cuantitativa', 'titulo' => 'Vieja', 'objetivo_litros' => 1000,
+        'fecha_inicio' => today()->subDays(10), 'fecha_fin' => today()->subDay(),
+    ]);
+    $racha = Racha::create(['user_id' => $usuario->id, 'vivienda_id' => $vivienda->id, 'actual' => 4, 'mejor' => 4, 'ultima_fecha' => today()->subDays(2)]);
+    $invitacion = $vivienda->invitaciones()->create([
+        'invitado_por' => $usuario->id, 'email' => 'x@example.test', 'token' => hash('sha256', 'abc'),
+        'expira_en' => now()->subHour(),
+    ]);
+
+    $this->artisan('gotaverde:cierre-diario')->assertSuccessful();
+
+    expect($meta->fresh()->estado)->toBe('vencida')
+        ->and($racha->fresh()->actual)->toBe(0)
+        ->and($racha->fresh()->mejor)->toBe(4)
+        ->and($invitacion->fresh()->estado)->toBe('expirada');
+});

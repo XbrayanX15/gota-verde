@@ -1,0 +1,17 @@
+@extends('layouts.app')
+@section('titulo','Catálogo de actividades')
+@section('contenido')
+<header class="gv-header"><div><h1>Catálogo de actividades</h1><p class="gv-sub">Litros por unidad y referencia eficiente usados en los cálculos (CU-16).</p></div></header>
+@php($a = $editando)
+<div class="gv-columns"><section class="gv-card"><div class="gv-scroll"><table class="gv-table"><thead><tr><th>Actividad</th><th>Unidad</th><th>L/unidad</th><th>Ref. eficiente</th><th>Registros</th><th>Estado</th><th></th></tr></thead><tbody>
+@foreach($actividades as $actividad)<tr><td><strong>{{ $actividad->nombre }}</strong><br><small class="gv-label">{{ $actividad->clave }}</small></td><td>{{ $actividad->unidad }}</td><td>{{ (float)$actividad->litros_por_unidad }}</td><td>{{ (float)$actividad->referencia_eficiente }}</td><td>{{ $actividad->registros_count }}</td><td><span class="gv-tag {{ $actividad->activa ? 'ok' : 'warn' }}">{{ $actividad->activa ? 'Activa' : 'Inactiva' }}</span></td><td><div class="gv-row"><a class="gv-link" href="{{ route('admin.actividades.edit',$actividad) }}">Editar</a><form class="gv-inline" method="POST" action="{{ route('admin.actividades.alternar',$actividad) }}">@csrf @method('PATCH')<button class="gv-link {{ $actividad->activa ? 'danger' : '' }}">{{ $actividad->activa ? 'Desactivar' : 'Activar' }}</button></form></div></td></tr>@endforeach
+</tbody></table></div><p class="gv-note">Las actividades no se eliminan para no perder el historial; desactívalas para ocultarlas del registro.</p></section>
+<section class="gv-card"><h2>{{ $a ? 'Editar '.$a->nombre : 'Nueva actividad' }}</h2>
+<form method="POST" action="{{ $a ? route('admin.actividades.update',$a) : route('admin.actividades.store') }}">@csrf @if($a) @method('PUT') @endif
+<div class="gv-field"><label for="nombre">Nombre</label><input id="nombre" name="nombre" required maxlength="100" value="{{ old('nombre',$a?->nombre) }}"></div>
+<div class="gv-field"><label for="clave">Clave (sin espacios)</label><input id="clave" name="clave" required maxlength="60" pattern="[A-Za-z0-9_\-]+" value="{{ old('clave',$a?->clave) }}"></div>
+<div class="gv-forms"><div class="gv-field"><label for="unidad">Unidad</label><input id="unidad" name="unidad" required maxlength="40" placeholder="minuto" value="{{ old('unidad',$a?->unidad) }}"></div><div class="gv-field"><label for="litros_por_unidad">Litros por unidad</label><input id="litros_por_unidad" name="litros_por_unidad" type="number" step="0.01" min="0.01" required value="{{ old('litros_por_unidad',$a ? (float)$a->litros_por_unidad : null) }}"></div>
+<div class="gv-field wide"><label for="referencia_eficiente">Referencia eficiente (cantidad)</label><input id="referencia_eficiente" name="referencia_eficiente" type="number" step="0.01" min="0" required value="{{ old('referencia_eficiente',$a ? (float)$a->referencia_eficiente : null) }}"></div></div>
+<div class="gv-row"><button class="gv-btn" type="submit">{{ $a ? 'Guardar cambios' : 'Agregar actividad' }}</button>@if($a)<a class="gv-btn alt" href="{{ route('admin.actividades.index') }}">Cancelar</a>@endif</div></form>
+<p class="gv-note">Ahorro = (referencia − cantidad) × litros por unidad, si la cantidad es menor que la referencia. Los cambios aplican a los registros nuevos.</p></section></div>
+@endsection
